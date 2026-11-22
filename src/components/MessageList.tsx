@@ -174,7 +174,7 @@ export function MessageList({
                 <div className="mt-0.5">
                   <ElsaMark size="sm" />
                 </div>
-                <div className="min-w-0 flex-1 rounded-2xl border border-[#D8D4C9] bg-[#EAE8E1] px-5 py-4 shadow-[0_1px_2px_rgba(28,27,25,0.03)]">
+                <div className="max-w-[85%] rounded-2xl border border-[#D8D4C9] bg-[#EAE8E1] px-5 py-4 shadow-[0_1px_2px_rgba(28,27,25,0.03)] sm:max-w-[78%]">
                   {isWaitingFirstChunk ? (
                     <div
                       aria-label="Loading response"
@@ -188,8 +188,8 @@ export function MessageList({
                     <MarkdownLite content={msg.text} />
                   )}
 
-                  <div className="mt-3.5 flex flex-col border-t border-transparent pt-0 text-[11px] text-[#5E5A52] transition-colors duration-200 group-hover/msg:border-[#DCD8CD]">
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 opacity-0 translate-y-1 transition-all duration-200 ease-out group-hover/msg:opacity-100 group-hover/msg:translate-y-0 group-hover/msg:duration-150">
+                  <div className="mt-3.5 flex flex-col border-t border-transparent pt-0 text-[11px] text-[#5E5A52] transition-all duration-200 group-hover/msg:border-[#DCD8CD]">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 opacity-0 max-h-0 overflow-hidden transition-all duration-200 ease-out group-hover/msg:opacity-100 group-hover/msg:max-h-24">
                       <div className="flex items-center gap-1.5">
                         <span className="font-semibold text-[#1C1B19]">ኤልሳ AI</span>
                         <span aria-hidden="true">·</span>
