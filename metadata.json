@@ -1,0 +1,6 @@
+{
+  "name": "Elsa AI — Amharic Assistant",
+  "description": "Modern Amharic conversational AI assistant powered exclusively by Gemini Flash and Flash Lite models with customizable tone, domain mode, and language script controls.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

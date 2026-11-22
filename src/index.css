@@ -1,0 +1,151 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    color-scheme: light;
+    --font-sans: "Plus Jakarta Sans", "Noto Sans Ethiopic", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --elsa-canvas: #f3f1ec;
+    --elsa-surface: #f8f7f3;
+    --elsa-ai-card: #eae8e1;
+    --elsa-user-card: #faf9f5;
+    --elsa-border: #dcd9d0;
+    --elsa-ink: #1c1b19;
+    --elsa-muted: #5e5a52;
+    --elsa-accent: #1c1b19;
+    --elsa-accent-hover: #33312d;
+  }
+
+  html,
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--elsa-canvas);
+    color: var(--elsa-ink);
+    margin: 0;
+    padding: 0;
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes elsa-pulse-dot {
+  0%, 80%, 100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+.elsa-dot-1 {
+  animation: elsa-pulse-dot 1.2s infinite ease-in-out;
+}
+.elsa-dot-2 {
+  animation: elsa-pulse-dot 1.2s 0.2s infinite ease-in-out;
+}
+.elsa-dot-3 {
+  animation: elsa-pulse-dot 1.2s 0.4s infinite ease-in-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elsa-dot-1,
+  .elsa-dot-2,
+  .elsa-dot-3 {
+    animation: none;
+    opacity: 0.65;
+  }
+}
+
+@keyframes elsa-rename-flash {
+  0% {
+    background-color: #d7d2c6;
+    box-shadow: inset 0 0 0 1px rgba(28, 27, 25, 0.22);
+  }
+  45% {
+    background-color: #e4e0d5;
+    box-shadow: inset 0 0 0 1px rgba(28, 27, 25, 0.14);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+}
+
+@keyframes elsa-rename-sweep {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0.75;
+  }
+  100% {
+    transform: translateX(120%);
+    opacity: 0;
+  }
+}
+
+@keyframes elsa-rename-text-in {
+  0% {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.elsa-rename-row {
+  position: relative;
+  overflow: hidden;
+  animation: elsa-rename-flash 2.1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.elsa-rename-row::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.65) 50%,
+    transparent 100%
+  );
+  animation: elsa-rename-sweep 1.1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.elsa-rename-text {
+  animation: elsa-rename-text-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .elsa-rename-row,
+  .elsa-rename-row::after,
+  .elsa-rename-text {
+    animation: none;
+  }
+  .elsa-rename-row {
+    background-color: #e4e0d5;
+  }
+}
+
+/* Custom subtle warm scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(28, 27, 25, 0.16);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(28, 27, 25, 0.28);
+}

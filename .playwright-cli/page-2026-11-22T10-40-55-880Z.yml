@@ -1,0 +1,35 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]: ኤልሳ AI
+      - button "አዲስ ውይይት" [ref=e15]
+      - generic [ref=e18]: የቀድሞ ውይይቶች
+      - navigation "Conversation history" [ref=e19]:
+        - paragraph [ref=e20]: እስካሁን የተቀመጠ ውይይት የለም።
+  - generic [ref=e21]:
+    - banner [ref=e22]:
+      - generic [ref=e23]: ኤልሳ AI
+    - main [ref=e24]:
+      - generic [ref=e26]:
+        - heading "ኤልሳ AI" [level=1] [ref=e32]
+        - generic [ref=e33]:
+          - heading "እንኳን በደህና መጡ" [level=2] [ref=e34]
+          - paragraph [ref=e35]: ኤልሳ AI በአማርኛ የሚያግዝዎት ብልህ ረዳት ናት። በጽሑፍ ዝግጅት፣ በትርጉም፣ በዕውቀት ማብራሪያ እና በዕለት ተዕለት የሥራ ወይም የጥናት ጉዳዮች ፈጣንና ግልጽ እገዛ ታደርግልዎታለች።
+        - generic [ref=e36]:
+          - generic [ref=e37]:
+            - heading "የጽሑፍ ዝግጅትና አርትዖት" [level=3] [ref=e38]
+            - paragraph [ref=e39]: ኢሜይሎችን፣ ደብዳቤዎችን፣ ማመልከቻዎችን እና ንግግሮችን በተስተካከለ አማርኛ ማዘጋጀት።
+          - generic [ref=e40]:
+            - heading "ትርጉምና ማጠቃለያ" [level=3] [ref=e41]
+            - paragraph [ref=e42]: ረጃጅም ጽሑፎችን በአጭሩ ማጠቃለልና ሀሳቦችን ወደ አማርኛ ወይም ሌሎች ቋንቋዎች መተርጎም።
+          - generic [ref=e43]:
+            - heading "ጥያቄና መልስ" [level=3] [ref=e44]
+            - paragraph [ref=e45]: በታሪክ፣ በሳይንስ፣ በቴክኖሎጂ እና በትምህርት ጉዳዮች ዙሪያ ግልጽ ማብራሪያ መስጠት።
+          - generic [ref=e46]:
+            - heading "ሀሳብ ማፍለቅና እቅድ" [level=3] [ref=e47]
+            - paragraph [ref=e48]: ለፕሮጀክቶች፣ ለንግድ ሥራ እና ለዕለት ተዕለት ተግባራት የተደራጀ እቅድና ሀሳብ ማቅረብ።
+      - generic [ref=e51]:
+        - generic [ref=e52]: መልእክትዎን በአማርኛ ይጻፉ
+        - textbox "መልእክትዎን በአማርኛ ይጻፉ" [ref=e53]:
+          - /placeholder: ለኤልሳ AI በአማርኛ ይጻፉ...
+        - button "Send message" [disabled] [ref=e54]
