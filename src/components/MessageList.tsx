@@ -188,49 +188,51 @@ export function MessageList({
                     <MarkdownLite content={msg.text} />
                   )}
 
-                  <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2 border-t border-transparent pt-2.5 text-[11px] text-[#5E5A52] transition-colors duration-200 group-hover/msg:border-[#DCD8CD]">
-                    <div className="flex items-center gap-1.5">
-                      <span className="font-semibold text-[#1C1B19]">ኤልሳ AI</span>
-                      <span aria-hidden="true">·</span>
-                      <span className="font-mono tabular-nums">
-                        {formatTime(msg.createdAt)}
-                      </span>
-                    </div>
+                  <div className="mt-3.5 flex flex-col border-t border-transparent pt-0 text-[11px] text-[#5E5A52] transition-colors duration-200 group-hover/msg:border-[#DCD8CD]">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2.5 opacity-0 translate-y-1 transition-all duration-200 ease-out group-hover/msg:opacity-100 group-hover/msg:translate-y-0 group-hover/msg:duration-150">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-semibold text-[#1C1B19]">ኤልሳ AI</span>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono tabular-nums">
+                          {formatTime(msg.createdAt)}
+                        </span>
+                      </div>
 
-                    {msg.text && (
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(msg.id, msg.text)}
-                          aria-label="Copy response"
-                          className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-[#4A4740] transition-colors hover:bg-[#DFDCD3] hover:text-[#1C1B19] focus-visible:ring-2 focus-visible:ring-[#1C1B19] focus-visible:outline-none whitespace-nowrap"
-                        >
-                          {copiedId === msg.id ? (
-                            <>
-                              <Check className="h-3.5 w-3.5 text-[#1C1B19]" />
-                              <span className="text-[#1C1B19]">ተቀድቷል</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-3.5 w-3.5" />
-                              <span>ቅዳ</span>
-                            </>
-                          )}
-                        </button>
-
-                        {isLastModel && !isStreaming && (
+                      {msg.text && (
+                        <div className="flex items-center gap-1">
                           <button
                             type="button"
-                            onClick={onRegenerate}
-                            aria-label="Regenerate response"
+                            onClick={() => handleCopy(msg.id, msg.text)}
+                            aria-label="Copy response"
                             className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-[#4A4740] transition-colors hover:bg-[#DFDCD3] hover:text-[#1C1B19] focus-visible:ring-2 focus-visible:ring-[#1C1B19] focus-visible:outline-none whitespace-nowrap"
                           >
-                            <RefreshCw className="h-3.5 w-3.5" />
-                            <span>እንደገና</span>
+                            {copiedId === msg.id ? (
+                              <>
+                                <Check className="h-3.5 w-3.5 text-[#1C1B19]" />
+                                <span className="text-[#1C1B19]">ተቀድቷል</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3.5 w-3.5" />
+                                <span>ቅዳ</span>
+                              </>
+                            )}
                           </button>
-                        )}
-                      </div>
-                    )}
+
+                          {isLastModel && !isStreaming && (
+                            <button
+                              type="button"
+                              onClick={onRegenerate}
+                              aria-label="Regenerate response"
+                              className="inline-flex h-7 items-center gap-1 rounded-lg px-2 text-xs font-medium text-[#4A4740] transition-colors hover:bg-[#DFDCD3] hover:text-[#1C1B19] focus-visible:ring-2 focus-visible:ring-[#1C1B19] focus-visible:outline-none whitespace-nowrap"
+                            >
+                              <RefreshCw className="h-3.5 w-3.5" />
+                              <span>እንደገና</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
