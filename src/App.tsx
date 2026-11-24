@@ -14,6 +14,8 @@ import {
   getOrCreateElsaUserId,
   loadConversations,
   loadEnabledConnectors,
+  loadRecentConnectors,
+  recordRecentConnectors,
   saveConversations,
   saveEnabledConnectors,
   type Conversation,
@@ -35,6 +37,9 @@ export default function App() {
   const [userId] = useState<string>(() => getOrCreateElsaUserId());
   const [enabledConnectors, setEnabledConnectors] = useState<string[]>(() =>
     loadEnabledConnectors(),
+  );
+  const [recentConnectors, setRecentConnectors] = useState<string[]>(() =>
+    loadRecentConnectors(),
   );
 
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -63,6 +68,9 @@ export default function App() {
       }
       return prev.filter((item) => item !== clean);
     });
+    if (enable) {
+      setRecentConnectors(recordRecentConnectors([clean]));
+    }
   }, []);
 
   useEffect(() => {
@@ -198,6 +206,9 @@ export default function App() {
 
           if (event.type === 'tool_status') {
             setActiveToolStatus('ከተገናኙ መተግበሪያዎች ጋር በመሥራት ላይ...');
+            if (enabledConnectors.length > 0) {
+              setRecentConnectors(recordRecentConnectors(enabledConnectors));
+            }
           } else if (event.type === 'chunk' && typeof event.text === 'string') {
             setActiveToolStatus(null);
             accumulatedText += event.text;
@@ -354,6 +365,10 @@ export default function App() {
       void renameSessionInBackground(targetConvId, nextHistory);
     }
 
+    if (enabledConnectors.length > 0) {
+      setRecentConnectors(recordRecentConnectors(enabledConnectors));
+    }
+
     await streamReply(targetConvId, nextHistory);
   };
 
@@ -458,6 +473,7 @@ export default function App() {
         isOpen={isConnectorsOpen}
         userId={userId}
         enabledConnectors={enabledConnectors}
+        recentConnectors={recentConnectors}
         onToggleConnector={handleToggleConnector}
         onClose={() => setIsConnectorsOpen(false)}
       />

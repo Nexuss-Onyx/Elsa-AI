@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   dedupeEmptyConversations,
   filterNonEmptyConversations,
+  mergeRecentConnectors,
   startOrReuseNewConversation,
   type Conversation,
 } from './storage';
@@ -53,4 +54,9 @@ test('startOrReuseNewConversation creates a new conversation only when none is e
   assert.equal(next.conversations.length, 2);
   assert.equal(next.conversations[0].messages.length, 0);
   assert.equal(next.conversations[0].id, next.activeId);
+});
+
+test('mergeRecentConnectors pins newest used slugs to front and dedupes', () => {
+  const next = mergeRecentConnectors(['Slack', 'notion'], ['gmail', 'slack', 'github'], 4);
+  assert.deepEqual(next, ['slack', 'notion', 'gmail', 'github']);
 });

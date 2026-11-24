@@ -18,6 +18,179 @@ export interface ConnectorAppItem {
   isConnected: boolean;
   connectedAccountId: string | null;
   connectionStatus: string | null;
+  isPinnedRecent?: boolean;
+}
+
+export const MOST_USEFUL_TOOLKIT_ORDER: string[] = [
+  'gmail',
+  'googlecalendar',
+  'notion',
+  'googledrive',
+  'googlesheets',
+  'googledocs',
+  'slack',
+  'github',
+  'outlook',
+  'microsoft_teams',
+  'zoom',
+  'discord',
+  'linear',
+  'jira',
+  'asana',
+  'trello',
+  'todoist',
+  'airtable',
+  'hubspot',
+  'dropbox',
+  'figma',
+  'shopify',
+  'stripe',
+  'salesforce',
+  'zendesk',
+  'clickup',
+  'calendly',
+  'cal',
+  'onedrive',
+  'whatsapp',
+  'telegram',
+  'youtube',
+  'linkedin',
+  'twitter',
+  'reddit',
+  'gitlab',
+  'bitbucket',
+  'vercel',
+  'supabase',
+  'postgres',
+  'perplexityai',
+  'exa',
+  'firecrawl',
+  'tavily',
+];
+
+const MOST_USEFUL_RANK_MAP = new Map<string, number>(
+  MOST_USEFUL_TOOLKIT_ORDER.map((slug, index) => [slug, index]),
+);
+
+const DEMOTED_TOOLKIT_SLUGS = new Set<string>(['composio', '0codekit']);
+const NOISY_CATEGORY_IDS = new Set<string>([
+  'popular',
+  'other-/-miscellaneous',
+  'other',
+  'miscellaneous',
+  'uncategorized',
+  'unknown',
+]);
+
+function formatCategoryDisplayName(rawName: string, slug: string): string {
+  const trimmed = rawName.trim();
+  if (trimmed && /[A-Z]/.test(trimmed)) {
+    return trimmed;
+  }
+  const source = trimmed || slug;
+  const upperWords = new Set(['crm', 'ai', 'hr', 'erp', 'lms', 'seo', 'api', 'bi', 'it', 'cms']);
+  return source
+    .replace(/-/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .map((word) => {
+      const lower = word.toLowerCase();
+      if (upperWords.has(lower)) return lower.toUpperCase();
+      if (lower === '&' || lower === '/') return lower;
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(' ');
+}
+
+export function curateCategories(
+  rawItems: Array<{ id?: string; name?: string }>,
+  limit = 30,
+): ConnectorCategoryItem[] {
+  const counts = new Map<string, { id: string; name: string; count: number }>();
+
+  for (const item of rawItems) {
+    const rawId = typeof item.id === 'string' ? item.id.trim().toLowerCase() : '';
+    const rawName = typeof item.name === 'string' ? item.name.trim() : '';
+    if (!rawId || rawId.length > 48 || NOISY_CATEGORY_IDS.has(rawId)) continue;
+
+    const existing = counts.get(rawId);
+    const formattedName = formatCategoryDisplayName(rawName, rawId);
+    if (existing) {
+      existing.count += 1;
+      if (rawName && /[A-Z]/.test(rawName) && !/[A-Z]/.test(existing.name)) {
+        existing.name = formattedName;
+      }
+    } else {
+      counts.set(rawId, {
+        id: rawId,
+        name: formattedName,
+        count: 1,
+      });
+    }
+  }
+
+  return Array.from(counts.values())
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0, limit)
+    .map(({ id, name }) => ({ id, name }));
+}
+
+export function isDemotedUtilityToolkit(slug: string, toolsCount?: number | null): boolean {
+  const lower = slug.trim().toLowerCase();
+  if (!lower) return true;
+  if (DEMOTED_TOOLKIT_SLUGS.has(lower)) return true;
+  if (lower.endsWith('_mcp') || lower.startsWith('composio_')) return true;
+  if (typeof toolsCount === 'number' && toolsCount <= 0) return true;
+  return false;
+}
+
+export function sortToolkitsByUtility<
+  T extends {
+    slug: string;
+    name: string;
+    toolsCount?: number | null;
+    isConnected?: boolean;
+  },
+>(items: T[], recentSlugs: string[] = []): T[] {
+  const recentMap = new Map<string, number>();
+  recentSlugs.forEach((slug, index) => {
+    const clean = slug.trim().toLowerCase();
+    if (clean && !recentMap.has(clean)) {
+      recentMap.set(clean, index);
+    }
+  });
+
+  return [...items].sort((a, b) => {
+    const slugA = a.slug.trim().toLowerCase();
+    const slugB = b.slug.trim().toLowerCase();
+
+    const recentA = recentMap.get(slugA);
+    const recentB = recentMap.get(slugB);
+    if (recentA !== undefined && recentB !== undefined) return recentA - recentB;
+    if (recentA !== undefined) return -1;
+    if (recentB !== undefined) return 1;
+
+    const demotedA = isDemotedUtilityToolkit(slugA, a.toolsCount);
+    const demotedB = isDemotedUtilityToolkit(slugB, b.toolsCount);
+    if (demotedA !== demotedB) return demotedA ? 1 : -1;
+
+    const rankA = MOST_USEFUL_RANK_MAP.get(slugA);
+    const rankB = MOST_USEFUL_RANK_MAP.get(slugB);
+    if (rankA !== undefined && rankB !== undefined) return rankA - rankB;
+    if (rankA !== undefined) return -1;
+    if (rankB !== undefined) return 1;
+
+    const connA = Boolean(a.isConnected);
+    const connB = Boolean(b.isConnected);
+    if (connA !== connB) return connA ? -1 : 1;
+
+    const toolsA = typeof a.toolsCount === 'number' ? a.toolsCount : 0;
+    const toolsB = typeof b.toolsCount === 'number' ? b.toolsCount : 0;
+    if (toolsA !== toolsB) return toolsB - toolsA;
+
+    return a.name.localeCompare(b.name);
+  });
 }
 
 interface CachedToolkitMeta {
@@ -245,7 +418,7 @@ async function getBrowseSession(userId: string, origin: string): Promise<Composi
 async function enrichToolkitMetadata(slugs: string[]): Promise<void> {
   const now = Date.now();
   const missing = slugs.filter((slug) => {
-    const cached = toolkitMetaCache.get(slug);
+    const cached = toolkitMetaCache.get(slug.toLowerCase());
     return !cached || now - cached.cachedAt > META_TTL_MS;
   });
 
@@ -275,12 +448,40 @@ export async function listComposioCategories(): Promise<ConnectorCategoryItem[]>
   }
   const composio = getComposioClient();
   const response = await composio.toolkits.listCategories();
-  const items = (response.items ?? []).map((cat) => ({
-    id: cat.id,
-    name: cat.name,
-  }));
+  const items = curateCategories(response.items ?? [], 30);
   categoriesCache = { items, cachedAt: Date.now() };
   return items;
+}
+
+const CATALOG_START_CURSOR = '__catalog_start';
+
+function mapSessionToolkitItem(
+  item: {
+    slug: string;
+    name: string;
+    logo?: string;
+    isNoAuth: boolean;
+    connection?: {
+      isActive?: boolean;
+      connectedAccount?: { id?: string; status?: string };
+    };
+  },
+  isPinnedRecent = false,
+): ConnectorAppItem {
+  const meta = toolkitMetaCache.get(item.slug.toLowerCase());
+  return {
+    slug: item.slug,
+    name: item.name,
+    logo: item.logo ?? meta?.logo ?? null,
+    description: meta?.description ?? '',
+    categories: meta?.categories ?? [],
+    toolsCount: meta?.toolsCount ?? null,
+    isNoAuth: Boolean(item.isNoAuth),
+    isConnected: Boolean(item.connection?.isActive),
+    connectedAccountId: item.connection?.connectedAccount?.id ?? null,
+    connectionStatus: item.connection?.connectedAccount?.status ?? null,
+    ...(isPinnedRecent ? { isPinnedRecent: true } : {}),
+  };
 }
 
 export async function listComposioToolkits(params: {
@@ -291,39 +492,98 @@ export async function listComposioToolkits(params: {
   connectedOnly?: boolean;
   cursor?: string;
   limit?: number;
+  recentSlugs?: string[];
 }): Promise<{
+  pinnedItems: ConnectorAppItem[];
   items: ConnectorAppItem[];
   cursor: string | null;
   totalPages: number;
 }> {
   const session = await getBrowseSession(params.userId, params.origin);
   const composio = getComposioClient();
-  const limit = Math.min(Math.max(params.limit ?? 36, 1), 100);
+  const limit = Math.min(Math.max(params.limit ?? 20, 1), 100);
   const search = params.search?.trim() ?? '';
   const category = params.category?.trim() ?? '';
+  const recentSlugs = normalizeToolkitSlugs(params.recentSlugs ?? []);
 
+  // Category-filtered browse (strictly 20 per page, with Next/Previous pagination & utility sorting)
   if (category && category !== 'all' && !search) {
-    const rawByCategory = await composio.toolkits.get({
-      category,
-      limit,
-      cursor: params.cursor || undefined,
-      sortBy: 'usage',
-    });
+    type RawCategoryToolkit = {
+      slug: string;
+      name: string;
+      meta?: {
+        description?: string;
+        categories?: Array<{ id?: string; slug?: string; name: string }>;
+        tools_count?: number;
+        toolsCount?: number;
+        logo?: string;
+      };
+    };
+
+    let rawItems: RawCategoryToolkit[] = [];
+    let nextCursor: string | null = null;
+    let totalPages = 1;
+
+    const internalClient = (
+      composio as unknown as {
+        client?: {
+          toolkits?: {
+            list?: (query: Record<string, unknown>) => Promise<{
+              items?: RawCategoryToolkit[];
+              next_cursor?: string | null;
+              total_pages?: number;
+            }>;
+          };
+        };
+      }
+    ).client;
+
+    if (internalClient?.toolkits?.list) {
+      const rawRes = await internalClient.toolkits.list({
+        category,
+        limit,
+        cursor: params.cursor || undefined,
+        sort_by: 'usage',
+      });
+      rawItems = Array.isArray(rawRes.items) ? rawRes.items : [];
+      nextCursor = rawRes.next_cursor ?? null;
+      totalPages = rawRes.total_pages ?? 1;
+    } else {
+      const rawByCategory = await composio.toolkits.get({
+        category,
+        limit,
+        cursor: params.cursor || undefined,
+        sortBy: 'usage',
+      });
+      rawItems = rawByCategory as unknown as RawCategoryToolkit[];
+    }
 
     const now = Date.now();
-    for (const tk of rawByCategory) {
+    for (const tk of rawItems) {
+      const normalizedCats = Array.isArray(tk.meta?.categories)
+        ? tk.meta.categories.map((c) => ({
+            slug: c.slug ?? c.id ?? '',
+            name: c.name,
+          }))
+        : [];
+      const toolsCount =
+        typeof tk.meta?.toolsCount === 'number'
+          ? tk.meta.toolsCount
+          : typeof tk.meta?.tools_count === 'number'
+            ? tk.meta.tools_count
+            : null;
       toolkitMetaCache.set(tk.slug.toLowerCase(), {
         description: tk.meta?.description ?? '',
-        categories: Array.isArray(tk.meta?.categories) ? tk.meta.categories : [],
-        toolsCount: typeof tk.meta?.toolsCount === 'number' ? tk.meta.toolsCount : null,
+        categories: normalizedCats,
+        toolsCount,
         logo: tk.meta?.logo ?? null,
         cachedAt: now,
       });
     }
 
-    const slugs = rawByCategory.map((t) => t.slug).filter(Boolean);
+    const slugs = rawItems.map((t) => t.slug).filter(Boolean);
     if (slugs.length === 0) {
-      return { items: [], cursor: null, totalPages: 1 };
+      return { pinnedItems: [], items: [], cursor: null, totalPages: 1 };
     }
 
     const stateRes = await session.toolkits({
@@ -334,17 +594,18 @@ export async function listComposioToolkits(params: {
 
     const stateMap = new Map(stateRes.items.map((item) => [item.slug.toLowerCase(), item]));
     const mapped: ConnectorAppItem[] = [];
-    for (const tk of rawByCategory) {
+    for (const tk of rawItems) {
       const state = stateMap.get(tk.slug.toLowerCase());
       const isConnected = Boolean(state?.connection?.isActive);
       if (params.connectedOnly && !isConnected) continue;
+      const cached = toolkitMetaCache.get(tk.slug.toLowerCase());
       mapped.push({
         slug: tk.slug,
         name: tk.name,
-        logo: state?.logo ?? tk.meta?.logo ?? null,
-        description: tk.meta?.description ?? '',
-        categories: Array.isArray(tk.meta?.categories) ? tk.meta.categories : [],
-        toolsCount: typeof tk.meta?.toolsCount === 'number' ? tk.meta.toolsCount : null,
+        logo: state?.logo ?? cached?.logo ?? null,
+        description: cached?.description ?? '',
+        categories: cached?.categories ?? [],
+        toolsCount: cached?.toolsCount ?? null,
         isNoAuth: Boolean(state?.isNoAuth),
         isConnected,
         connectedAccountId: state?.connection?.connectedAccount?.id ?? null,
@@ -352,41 +613,89 @@ export async function listComposioToolkits(params: {
       });
     }
 
+    const sorted = sortToolkitsByUtility(mapped, !params.cursor ? recentSlugs : []);
     return {
-      items: mapped,
-      cursor: null,
-      totalPages: 1,
+      pinnedItems: [],
+      items: sorted,
+      cursor: nextCursor,
+      totalPages,
     };
   }
 
+  // Default Discovery Page 1: Pin recently used apps first, then sort most useful apps up (max 20 total)
+  if (!params.cursor && !search && !params.connectedOnly && (!category || category === 'all')) {
+    const pinnedRecentSlugs = recentSlugs.slice(0, Math.min(6, limit));
+    const pinnedSet = new Set(pinnedRecentSlugs);
+    const remainingSlots = Math.max(0, limit - pinnedRecentSlugs.length);
+    const usefulFillSlugs = MOST_USEFUL_TOOLKIT_ORDER.filter((s) => !pinnedSet.has(s)).slice(
+      0,
+      remainingSlots,
+    );
+    const seedSlugs = [...pinnedRecentSlugs, ...usefulFillSlugs];
+
+    const [seedRes] = await Promise.all([
+      session.toolkits({
+        toolkits: seedSlugs,
+        limit: seedSlugs.length,
+      }),
+      enrichToolkitMetadata(seedSlugs),
+    ]);
+
+    const stateMap = new Map(seedRes.items.map((item) => [item.slug.toLowerCase(), item]));
+
+    const pinnedItems: ConnectorAppItem[] = [];
+    for (const slug of pinnedRecentSlugs) {
+      const item = stateMap.get(slug);
+      if (item) {
+        pinnedItems.push(mapSessionToolkitItem(item, true));
+      }
+    }
+
+    const items: ConnectorAppItem[] = [];
+    for (const slug of usefulFillSlugs) {
+      const item = stateMap.get(slug);
+      if (item) {
+        items.push(mapSessionToolkitItem(item, false));
+      }
+    }
+
+    return {
+      pinnedItems,
+      items,
+      cursor: CATALOG_START_CURSOR,
+      totalPages: 50,
+    };
+  }
+
+  // Subsequent pages of All Apps or Search / Connected
+  const isCatalogStart = params.cursor === CATALOG_START_CURSOR;
+  const page1ExcludedSlugs = new Set<string>([
+    ...recentSlugs.slice(0, 6),
+    ...MOST_USEFUL_TOOLKIT_ORDER.slice(0, limit),
+  ]);
+
   const res = await session.toolkits({
     search: search || undefined,
-    limit,
-    cursor: params.cursor || undefined,
+    limit: isCatalogStart ? Math.min(limit + 14, 34) : limit,
+    cursor: isCatalogStart ? undefined : params.cursor || undefined,
     isConnected: params.connectedOnly ? true : undefined,
   });
 
-  const slugs = res.items.map((item) => item.slug);
+  const filteredRaw =
+    !search && !params.connectedOnly
+      ? res.items.filter((item) => !page1ExcludedSlugs.has(item.slug.toLowerCase()))
+      : res.items;
+
+  const slugs = filteredRaw.map((item) => item.slug);
   await enrichToolkitMetadata(slugs);
 
-  const items: ConnectorAppItem[] = res.items.map((item) => {
-    const meta = toolkitMetaCache.get(item.slug.toLowerCase());
-    return {
-      slug: item.slug,
-      name: item.name,
-      logo: item.logo ?? meta?.logo ?? null,
-      description: meta?.description ?? '',
-      categories: meta?.categories ?? [],
-      toolsCount: meta?.toolsCount ?? null,
-      isNoAuth: Boolean(item.isNoAuth),
-      isConnected: Boolean(item.connection?.isActive),
-      connectedAccountId: item.connection?.connectedAccount?.id ?? null,
-      connectionStatus: item.connection?.connectedAccount?.status ?? null,
-    };
-  });
+  const mapped = filteredRaw.map((item) => mapSessionToolkitItem(item, false));
+  const shouldPinInList = Boolean(search || params.connectedOnly);
+  const sorted = sortToolkitsByUtility(mapped, shouldPinInList ? recentSlugs : []);
 
   return {
-    items,
+    pinnedItems: [],
+    items: sorted,
     cursor: res.cursor ?? null,
     totalPages: res.totalPages ?? 1,
   };

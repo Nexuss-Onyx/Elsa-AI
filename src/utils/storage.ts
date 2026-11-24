@@ -108,6 +108,22 @@ export function saveConversations(conversations: Conversation[]): void {
 
 const ELSA_USER_ID_KEY = 'elsa_ai_user_id_v1';
 const ENABLED_CONNECTORS_KEY = 'elsa_ai_enabled_connectors_v1';
+const RECENT_CONNECTORS_KEY = 'elsa_ai_recent_connectors_v1';
+
+function sanitizeConnectorList(raw: unknown, maxItems = 100): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== 'string') continue;
+    const slug = item.trim().toLowerCase();
+    if (!/^[a-z0-9_-]{1,80}$/.test(slug) || seen.has(slug)) continue;
+    seen.add(slug);
+    out.push(slug);
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
 
 export function getOrCreateElsaUserId(): string {
   if (typeof window === 'undefined') return 'elsa-default-user';
@@ -132,16 +148,7 @@ export function loadEnabledConnectors(): string[] {
   try {
     const raw = window.localStorage.getItem(ENABLED_CONNECTORS_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return Array.from(
-      new Set(
-        parsed
-          .filter((item): item is string => typeof item === 'string')
-          .map((item) => item.trim().toLowerCase())
-          .filter((item) => /^[a-z0-9_-]{1,80}$/.test(item)),
-      ),
-    );
+    return sanitizeConnectorList(JSON.parse(raw), 100);
   } catch {
     return [];
   }
@@ -150,16 +157,57 @@ export function loadEnabledConnectors(): string[] {
 export function saveEnabledConnectors(slugs: string[]): void {
   if (typeof window === 'undefined') return;
   try {
-    const clean = Array.from(
-      new Set(
-        slugs
-          .map((s) => s.trim().toLowerCase())
-          .filter((s) => /^[a-z0-9_-]{1,80}$/.test(s)),
-      ),
-    );
+    const clean = sanitizeConnectorList(slugs, 100);
     window.localStorage.setItem(ENABLED_CONNECTORS_KEY, JSON.stringify(clean));
   } catch {
     // Ignore quota errors gracefully
   }
 }
+
+export function mergeRecentConnectors(
+  newlyUsed: string[],
+  existing: string[],
+  maxItems = 20,
+): string[] {
+  const cleanNew = sanitizeConnectorList(newlyUsed, maxItems);
+  const cleanExisting = sanitizeConnectorList(existing, maxItems);
+  const seen = new Set(cleanNew);
+  const merged = [...cleanNew];
+  for (const slug of cleanExisting) {
+    if (!seen.has(slug)) {
+      seen.add(slug);
+      merged.push(slug);
+      if (merged.length >= maxItems) break;
+    }
+  }
+  return merged.slice(0, maxItems);
+}
+
+export function loadRecentConnectors(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(RECENT_CONNECTORS_KEY);
+    if (!raw) return [];
+    return sanitizeConnectorList(JSON.parse(raw), 20);
+  } catch {
+    return [];
+  }
+}
+
+export function saveRecentConnectors(slugs: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const clean = sanitizeConnectorList(slugs, 20);
+    window.localStorage.setItem(RECENT_CONNECTORS_KEY, JSON.stringify(clean));
+  } catch {
+    // Ignore quota errors gracefully
+  }
+}
+
+export function recordRecentConnectors(newlyUsed: string[]): string[] {
+  const updated = mergeRecentConnectors(newlyUsed, loadRecentConnectors(), 20);
+  saveRecentConnectors(updated);
+  return updated;
+}
+
 

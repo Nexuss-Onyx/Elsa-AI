@@ -89,6 +89,7 @@ export function createApiApp(): Express {
     if (!isComposioConfigured()) {
       res.json({
         configured: false,
+        pinnedItems: [],
         items: [],
         cursor: null,
         totalPages: 1,
@@ -101,9 +102,13 @@ export function createApiApp(): Express {
       const category = typeof req.query.category === 'string' ? req.query.category : '';
       const connectedOnly = req.query.connectedOnly === 'true';
       const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
-      const rawLimit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 36;
-      const limit = Number.isFinite(rawLimit) ? rawLimit : 36;
+      const rawLimit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 20;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 20;
       const origin = resolveCallbackOrigin(req.query.clientOrigin);
+      const recentSlugs =
+        typeof req.query.recent === 'string' && req.query.recent.trim()
+          ? normalizeToolkitSlugs(req.query.recent.split(','))
+          : [];
 
       const data = await listComposioToolkits({
         userId,
@@ -113,6 +118,7 @@ export function createApiApp(): Express {
         connectedOnly,
         cursor,
         limit,
+        recentSlugs,
       });
 
       res.json({
@@ -123,6 +129,7 @@ export function createApiApp(): Express {
       const message = err instanceof Error ? err.message : 'Failed to load Composio connectors.';
       res.status(502).json({
         configured: true,
+        pinnedItems: [],
         items: [],
         cursor: null,
         totalPages: 1,

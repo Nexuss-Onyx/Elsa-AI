@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildOAuthCallbackHtml,
+  curateCategories,
   normalizeToolkitSlug,
   normalizeToolkitSlugs,
   normalizeUserId,
   resolveCallbackOrigin,
+  sortToolkitsByUtility,
 } from './composioServer.ts';
 import { buildElsaSystemInstruction } from './promptBuilder.ts';
 
@@ -59,4 +61,46 @@ test('buildElsaSystemInstruction includes enabled connectors when provided', () 
   const withConnectors = buildElsaSystemInstruction(['gmail', 'github']);
   assert.match(withConnectors, /gmail, github/);
   assert.match(withConnectors, /Connected App Tools/);
+});
+
+test('curateCategories deduplicates raw categories, removes noisy tags, and caps list', () => {
+  const raw = [
+    { id: 'popular', name: 'popular' },
+    { id: 'crm', name: 'crm' },
+    { id: 'CRM', name: 'CRM' },
+    { id: 'productivity', name: 'productivity' },
+    { id: 'productivity', name: 'Productivity' },
+    { id: 'productivity', name: 'productivity' },
+    { id: 'email', name: 'email' },
+  ];
+  const curated = curateCategories(raw, 2);
+  assert.equal(curated.length, 2);
+  assert.equal(curated[0].id, 'productivity');
+  assert.equal(curated[0].name, 'Productivity');
+  assert.equal(curated[1].id, 'crm');
+  assert.equal(curated[1].name, 'CRM');
+});
+
+test('sortToolkitsByUtility pins recently used apps first and sorts most useful apps above obscure ones', () => {
+  const sample = [
+    { slug: 'composio', name: 'Composio', toolsCount: 17, isConnected: false },
+    { slug: '0codekit', name: '0CodeKit', toolsCount: 8, isConnected: false },
+    { slug: 'ambiguous_mcp', name: 'Ambiguous MCP', toolsCount: 945, isConnected: false },
+    { slug: 'trello', name: 'Trello', toolsCount: 80, isConnected: false },
+    { slug: 'gmail', name: 'Gmail', toolsCount: 61, isConnected: false },
+    { slug: 'random_tool', name: 'Random Tool', toolsCount: 120, isConnected: false },
+    { slug: 'notion', name: 'Notion', toolsCount: 59, isConnected: false },
+  ];
+
+  const coldSorted = sortToolkitsByUtility(sample, []);
+  assert.deepEqual(
+    coldSorted.map((x) => x.slug),
+    ['gmail', 'notion', 'trello', 'random_tool', 'ambiguous_mcp', 'composio', '0codekit'],
+  );
+
+  const recentPinned = sortToolkitsByUtility(sample, ['trello', 'random_tool']);
+  assert.deepEqual(
+    recentPinned.slice(0, 4).map((x) => x.slug),
+    ['trello', 'random_tool', 'gmail', 'notion'],
+  );
 });
