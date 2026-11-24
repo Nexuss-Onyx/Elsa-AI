@@ -105,3 +105,61 @@ export function saveConversations(conversations: Conversation[]): void {
     // Ignore quota errors gracefully
   }
 }
+
+const ELSA_USER_ID_KEY = 'elsa_ai_user_id_v1';
+const ENABLED_CONNECTORS_KEY = 'elsa_ai_enabled_connectors_v1';
+
+export function getOrCreateElsaUserId(): string {
+  if (typeof window === 'undefined') return 'elsa-default-user';
+  try {
+    const existing = window.localStorage.getItem(ELSA_USER_ID_KEY);
+    if (existing && /^[a-zA-Z0-9_-]{4,80}$/.test(existing)) {
+      return existing;
+    }
+    const generated =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? `elsa_${crypto.randomUUID()}`
+        : `elsa_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    window.localStorage.setItem(ELSA_USER_ID_KEY, generated);
+    return generated;
+  } catch {
+    return 'elsa-default-user';
+  }
+}
+
+export function loadEnabledConnectors(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(ENABLED_CONNECTORS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return Array.from(
+      new Set(
+        parsed
+          .filter((item): item is string => typeof item === 'string')
+          .map((item) => item.trim().toLowerCase())
+          .filter((item) => /^[a-z0-9_-]{1,80}$/.test(item)),
+      ),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function saveEnabledConnectors(slugs: string[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const clean = Array.from(
+      new Set(
+        slugs
+          .map((s) => s.trim().toLowerCase())
+          .filter((s) => /^[a-z0-9_-]{1,80}$/.test(s)),
+      ),
+    );
+    window.localStorage.setItem(ENABLED_CONNECTORS_KEY, JSON.stringify(clean));
+  } catch {
+    // Ignore quota errors gracefully
+  }
+}
+

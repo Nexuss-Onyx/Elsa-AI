@@ -4,7 +4,7 @@ import type { Request, Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, type FunctionCall, type Part } from '@google/genai';
 import {
   TieredModelRouter,
   estimateRequestTokens,
@@ -17,6 +17,20 @@ import {
   sanitizeChatHistory,
   sanitizeGeneratedTitle,
 } from './src/lib/promptBuilder.ts';
+import {
+  buildOAuthCallbackHtml,
+  createAgentToolSession,
+  disconnectConnector,
+  initiateConnectorAuth,
+  isComposioConfigured,
+  listComposioCategories,
+  listComposioToolkits,
+  normalizeToolkitSlug,
+  normalizeToolkitSlugs,
+  normalizeUserId,
+  resolveCallbackOrigin,
+  type AgentToolSession,
+} from './src/lib/composioServer.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -59,15 +73,164 @@ async function startServer() {
     });
   });
 
+  app.get('/api/composio/categories', async (_req: Request, res: Response) => {
+    if (!isComposioConfigured()) {
+      res.json({ configured: false, categories: [] });
+      return;
+    }
+    try {
+      const categories = await listComposioCategories();
+      res.json({ configured: true, categories });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load connector categories.';
+      res.status(502).json({ configured: true, categories: [], error: message });
+    }
+  });
+
+  app.get('/api/composio/toolkits', async (req: Request, res: Response) => {
+    const userId = normalizeUserId(req.query.userId);
+    if (!userId) {
+      res.status(400).json({ error: 'Invalid userId.' });
+      return;
+    }
+
+    if (!isComposioConfigured()) {
+      res.json({
+        configured: false,
+        items: [],
+        cursor: null,
+        totalPages: 1,
+      });
+      return;
+    }
+
+    try {
+      const search = typeof req.query.search === 'string' ? req.query.search : '';
+      const category = typeof req.query.category === 'string' ? req.query.category : '';
+      const connectedOnly = req.query.connectedOnly === 'true';
+      const cursor = typeof req.query.cursor === 'string' ? req.query.cursor : undefined;
+      const rawLimit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : 36;
+      const limit = Number.isFinite(rawLimit) ? rawLimit : 36;
+      const origin = resolveCallbackOrigin(req.query.clientOrigin);
+
+      const data = await listComposioToolkits({
+        userId,
+        origin,
+        search,
+        category,
+        connectedOnly,
+        cursor,
+        limit,
+      });
+
+      res.json({
+        configured: true,
+        ...data,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load Composio connectors.';
+      res.status(502).json({
+        configured: true,
+        items: [],
+        cursor: null,
+        totalPages: 1,
+        error: message,
+      });
+    }
+  });
+
+  app.post('/api/composio/connect', async (req: Request, res: Response) => {
+    if (!isComposioConfigured()) {
+      res.status(503).json({
+        error: 'Composio API key is not configured. Add COMPOSIO_API_KEY in Settings > Secrets.',
+      });
+      return;
+    }
+
+    const body = (req.body ?? {}) as {
+      userId?: unknown;
+      toolkitSlug?: unknown;
+      clientOrigin?: unknown;
+    };
+
+    const userId = normalizeUserId(body.userId);
+    const toolkitSlug = normalizeToolkitSlug(body.toolkitSlug);
+    if (!userId || !toolkitSlug) {
+      res.status(400).json({ error: 'Valid userId and toolkitSlug are required.' });
+      return;
+    }
+
+    try {
+      const origin = resolveCallbackOrigin(body.clientOrigin);
+      const result = await initiateConnectorAuth({ userId, toolkitSlug, origin });
+      res.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to start connector authorization.';
+      res.status(502).json({ error: message });
+    }
+  });
+
+  app.get(['/api/composio/callback', '/api/composio/callback/'], (req: Request, res: Response) => {
+    const toolkit = typeof req.query.toolkit === 'string' ? req.query.toolkit : '';
+    const error = typeof req.query.error === 'string' ? req.query.error : undefined;
+    const status = typeof req.query.status === 'string' ? req.query.status : '';
+    const ok = !error && status.toLowerCase() !== 'failed';
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(buildOAuthCallbackHtml({ toolkit, ok, error }));
+  });
+
+  app.delete('/api/composio/connections/:connectionId', async (req: Request, res: Response) => {
+    if (!isComposioConfigured()) {
+      res.status(503).json({ error: 'Composio API key is not configured.' });
+      return;
+    }
+
+    const connectionId = typeof req.params.connectionId === 'string' ? req.params.connectionId.trim() : '';
+    if (!/^[a-zA-Z0-9_-]{4,120}$/.test(connectionId)) {
+      res.status(400).json({ error: 'Invalid connectionId.' });
+      return;
+    }
+
+    const userId = normalizeUserId(req.query.userId ?? (req.body as { userId?: unknown } | undefined)?.userId);
+    if (!userId) {
+      res.status(400).json({ error: 'Invalid userId.' });
+      return;
+    }
+
+    try {
+      const deleted = await disconnectConnector({ userId, connectionId });
+      if (!deleted) {
+        res.status(404).json({ error: 'Connected account not found.' });
+        return;
+      }
+      res.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to disconnect app.';
+      res.status(502).json({ error: message });
+    }
+  });
+
   app.post('/api/chat', async (req: Request, res: Response) => {
     const body = (req.body ?? {}) as {
       messages?: Array<{ role?: string; text?: string }>;
+      userId?: unknown;
+      enabledToolkits?: unknown;
+      clientOrigin?: unknown;
     };
 
     const turns = sanitizeChatHistory(Array.isArray(body.messages) ? body.messages : []);
     if (turns.length === 0 || turns[turns.length - 1].role !== 'user') {
       res.status(400).json({
         error: 'እባክዎ መጀመሪያ መልእክት ይጻፉ።',
+      });
+      return;
+    }
+
+    const userId = normalizeUserId(body.userId);
+    if (!userId) {
+      res.status(400).json({
+        error: 'ልክ ያልሆነ የተጠቃሚ መለያ።',
       });
       return;
     }
@@ -80,13 +243,32 @@ async function startServer() {
       return;
     }
 
-    const systemInstruction = buildElsaSystemInstruction();
+    const enabledToolkits = normalizeToolkitSlugs(body.enabledToolkits);
+    const origin = resolveCallbackOrigin(body.clientOrigin);
+
+    let agentSession: AgentToolSession | null = null;
+    if (enabledToolkits.length > 0 && isComposioConfigured()) {
+      try {
+        agentSession = await createAgentToolSession({
+          userId,
+          enabledToolkits,
+          origin,
+        });
+      } catch (err) {
+        console.warn('Composio session initialization skipped:', err instanceof Error ? err.message : err);
+      }
+    }
+
+    const activeConnectorList = agentSession && agentSession.tools.length > 0 ? enabledToolkits : [];
+    const systemInstruction = buildElsaSystemInstruction(activeConnectorList);
     const estimatedInputTokens = estimateRequestTokens(systemInstruction, turns, 1024);
 
     let closed = false;
+    const requestAbortController = new AbortController();
     res.on('close', () => {
       if (!res.writableEnded) {
         closed = true;
+        requestAbortController.abort();
       }
     });
 
@@ -104,7 +286,7 @@ async function startServer() {
     const ai = new GoogleGenAI({
       apiKey: process.env.GEMINI_API_KEY,
       httpOptions: {
-        timeout: 12_000,
+        timeout: agentSession ? 30_000 : 12_000,
         headers: {
           'User-Agent': 'aistudio-build',
         },
@@ -116,6 +298,7 @@ async function startServer() {
     });
 
     let streamedAnyChunk = false;
+    let executedAnyTool = false;
     let lastStatus = 500;
 
     for (const candidate of candidates) {
@@ -125,34 +308,132 @@ async function startServer() {
       modelRouter.recordAttempt(candidate.id, estimatedInputTokens, attemptStart);
 
       const attemptController = new AbortController();
+      const onRequestAbort = () => attemptController.abort();
+      requestAbortController.signal.addEventListener('abort', onRequestAbort, { once: true });
+
       const firstChunkTimer = setTimeout(() => {
         attemptController.abort(new Error('Upstream tier timeout (503)'));
       }, 10_000);
 
       try {
-        const stream = await ai.models.generateContentStream({
-          model: candidate.id,
-          contents: turns,
-          config: {
-            systemInstruction,
-            abortSignal: attemptController.signal,
-          },
-        });
-
         let outputText = '';
-        for await (const chunk of stream) {
-          if (closed) break;
-          const text = chunk.text;
-          if (typeof text === 'string' && text.length > 0) {
-            if (!streamedAnyChunk) {
-              clearTimeout(firstChunkTimer);
+
+        if (agentSession && agentSession.tools.length > 0) {
+          const history = turns.slice(0, -1);
+          const latestUserText = turns[turns.length - 1].parts[0].text;
+          const chat = ai.chats.create({
+            model: candidate.id,
+            history,
+            config: {
+              systemInstruction,
+              tools: [{ functionDeclarations: agentSession.tools }],
+            },
+          });
+
+          let nextMessage: string | Part[] = latestUserText;
+          const MAX_TOOL_ROUNDS = 8;
+
+          for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+            if (closed) break;
+
+            const stream = await chat.sendMessageStream({
+              message: nextMessage,
+              config: {
+                systemInstruction,
+                tools: [{ functionDeclarations: agentSession.tools }],
+                abortSignal: round === 0 ? attemptController.signal : requestAbortController.signal,
+              },
+            });
+
+            const pendingCalls: FunctionCall[] = [];
+            for await (const chunk of stream) {
+              if (closed) break;
+              if (Array.isArray(chunk.functionCalls) && chunk.functionCalls.length > 0) {
+                if (!streamedAnyChunk && !executedAnyTool) {
+                  clearTimeout(firstChunkTimer);
+                }
+                for (const fc of chunk.functionCalls) {
+                  pendingCalls.push(fc);
+                }
+              }
+              const text = chunk.text;
+              if (typeof text === 'string' && text.length > 0) {
+                if (!streamedAnyChunk && !executedAnyTool) {
+                  clearTimeout(firstChunkTimer);
+                }
+                streamedAnyChunk = true;
+                outputText += text;
+                writeEvent({ type: 'chunk', text });
+              }
             }
-            streamedAnyChunk = true;
-            outputText += text;
-            writeEvent({ type: 'chunk', text });
+
+            if (closed || pendingCalls.length === 0) {
+              break;
+            }
+
+            executedAnyTool = true;
+            writeEvent({
+              type: 'tool_status',
+              tools: pendingCalls.map((fc) => fc.name || 'connector_tool'),
+            });
+
+            const responseParts: Part[] = [];
+            for (const fc of pendingCalls) {
+              if (closed) break;
+              let parsedResult: unknown;
+              try {
+                const rawResult = await agentSession.executeToolCall({
+                  name: fc.name ?? '',
+                  args: (fc.args ?? {}) as Record<string, unknown>,
+                });
+                try {
+                  parsedResult = JSON.parse(rawResult);
+                } catch {
+                  parsedResult = rawResult;
+                }
+              } catch (toolErr) {
+                parsedResult = {
+                  error: toolErr instanceof Error ? toolErr.message : 'Tool execution failed',
+                };
+              }
+
+              responseParts.push({
+                functionResponse: {
+                  id: fc.id,
+                  name: fc.name,
+                  response: { result: parsedResult },
+                },
+              });
+            }
+
+            nextMessage = responseParts;
+          }
+        } else {
+          const stream = await ai.models.generateContentStream({
+            model: candidate.id,
+            contents: turns,
+            config: {
+              systemInstruction,
+              abortSignal: attemptController.signal,
+            },
+          });
+
+          for await (const chunk of stream) {
+            if (closed) break;
+            const text = chunk.text;
+            if (typeof text === 'string' && text.length > 0) {
+              if (!streamedAnyChunk) {
+                clearTimeout(firstChunkTimer);
+              }
+              streamedAnyChunk = true;
+              outputText += text;
+              writeEvent({ type: 'chunk', text });
+            }
           }
         }
+
         clearTimeout(firstChunkTimer);
+        requestAbortController.signal.removeEventListener('abort', onRequestAbort);
 
         if (closed) break;
 
@@ -173,6 +454,7 @@ async function startServer() {
         return;
       } catch (err) {
         clearTimeout(firstChunkTimer);
+        requestAbortController.signal.removeEventListener('abort', onRequestAbort);
         const status = classifyErrorStatus(err);
         lastStatus = status;
 
@@ -190,8 +472,8 @@ async function startServer() {
 
         modelRouter.markFailure(candidate.id, status, Date.now());
 
-        // If partial chunks were already sent to the client, stop rather than mixing partial outputs
-        if (streamedAnyChunk) {
+        // If partial chunks or tool executions already happened, stop rather than mixing partial outputs
+        if (streamedAnyChunk || executedAnyTool) {
           writeEvent({
             type: 'error',
             status,

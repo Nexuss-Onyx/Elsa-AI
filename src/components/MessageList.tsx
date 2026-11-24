@@ -13,6 +13,7 @@ import { ElsaMark } from './ElsaMark';
 interface MessageListProps {
   messages: ChatMessage[];
   isStreaming: boolean;
+  activeToolStatus?: string | null;
   errorMessage: string | null;
   onRegenerate: () => void;
   onRetryError: () => void;
@@ -32,6 +33,7 @@ function formatTime(ts: number): string {
 export function MessageList({
   messages,
   isStreaming,
+  activeToolStatus = null,
   errorMessage,
   onRegenerate,
   onRetryError,
@@ -178,11 +180,18 @@ export function MessageList({
                   {isWaitingFirstChunk ? (
                     <div
                       aria-label="Loading response"
-                      className="flex items-center gap-1.5 py-2"
+                      className="flex items-center gap-2.5 py-2"
                     >
-                      <span className="elsa-dot-1 h-2 w-2 rounded-full bg-[#1C1B19]" />
-                      <span className="elsa-dot-2 h-2 w-2 rounded-full bg-[#1C1B19]" />
-                      <span className="elsa-dot-3 h-2 w-2 rounded-full bg-[#1C1B19]" />
+                      <div className="flex items-center gap-1.5">
+                        <span className="elsa-dot-1 h-2 w-2 rounded-full bg-[#1C1B19]" />
+                        <span className="elsa-dot-2 h-2 w-2 rounded-full bg-[#1C1B19]" />
+                        <span className="elsa-dot-3 h-2 w-2 rounded-full bg-[#1C1B19]" />
+                      </div>
+                      {activeToolStatus && (
+                        <span className="text-xs text-[#5E5A52]">
+                          {activeToolStatus}
+                        </span>
+                      )}
                     </div>
                   ) : (
                     <MarkdownLite content={msg.text} />

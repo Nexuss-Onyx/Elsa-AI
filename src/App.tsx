@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Menu, Plus } from 'lucide-react';
 import { ChatComposer } from './components/ChatComposer';
+import { ConnectorsModal } from './components/ConnectorsModal';
 import { MessageList } from './components/MessageList';
 import { Sidebar } from './components/Sidebar';
 import {
@@ -10,8 +11,11 @@ import {
 } from './lib/promptBuilder';
 import {
   createId,
+  getOrCreateElsaUserId,
   loadConversations,
+  loadEnabledConnectors,
   saveConversations,
+  saveEnabledConnectors,
   type Conversation,
 } from './utils/storage';
 
@@ -24,8 +28,14 @@ export default function App() {
   const [recentlyRenamedId, setRecentlyRenamedId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [activeToolStatus, setActiveToolStatus] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isConnectorsOpen, setIsConnectorsOpen] = useState(false);
+  const [userId] = useState<string>(() => getOrCreateElsaUserId());
+  const [enabledConnectors, setEnabledConnectors] = useState<string[]>(() =>
+    loadEnabledConnectors(),
+  );
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const renameAttemptedRef = useRef<Set<string>>(new Set());
@@ -39,6 +49,21 @@ export default function App() {
   useEffect(() => {
     saveConversations(conversations);
   }, [conversations]);
+
+  useEffect(() => {
+    saveEnabledConnectors(enabledConnectors);
+  }, [enabledConnectors]);
+
+  const handleToggleConnector = useCallback((slug: string, enable: boolean) => {
+    const clean = slug.trim().toLowerCase();
+    if (!clean) return;
+    setEnabledConnectors((prev) => {
+      if (enable) {
+        return prev.includes(clean) ? prev : [...prev, clean];
+      }
+      return prev.filter((item) => item !== clean);
+    });
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -108,6 +133,7 @@ export default function App() {
     const controller = new AbortController();
     abortControllerRef.current = controller;
     setIsStreaming(true);
+    setActiveToolStatus(null);
     setErrorMessage(null);
 
     try {
@@ -116,6 +142,9 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
+          userId,
+          enabledToolkits: enabledConnectors,
+          clientOrigin: window.location.origin,
           messages: historyForRequest.map((m) => ({
             role: m.role,
             text: m.text,
@@ -161,12 +190,16 @@ export default function App() {
           if (!jsonText) continue;
 
           const event = JSON.parse(jsonText) as {
-            type: 'chunk' | 'done' | 'error';
+            type: 'chunk' | 'tool_status' | 'done' | 'error';
             text?: string;
             message?: string;
+            tools?: string[];
           };
 
-          if (event.type === 'chunk' && typeof event.text === 'string') {
+          if (event.type === 'tool_status') {
+            setActiveToolStatus('ከተገናኙ መተግበሪያዎች ጋር በመሥራት ላይ...');
+          } else if (event.type === 'chunk' && typeof event.text === 'string') {
+            setActiveToolStatus(null);
             accumulatedText += event.text;
             setConversations((prev) =>
               prev.map((conv) => {
@@ -216,6 +249,7 @@ export default function App() {
       );
     } finally {
       setIsStreaming(false);
+      setActiveToolStatus(null);
       abortControllerRef.current = null;
     }
   };
@@ -393,6 +427,7 @@ export default function App() {
           <MessageList
             messages={activeMessages}
             isStreaming={isStreaming}
+            activeToolStatus={activeToolStatus}
             errorMessage={errorMessage}
             onRegenerate={() => {
               void handleRegenerate();
@@ -405,6 +440,7 @@ export default function App() {
           <ChatComposer
             value={input}
             isStreaming={isStreaming}
+            enabledConnectorsCount={enabledConnectors.length}
             onChange={setInput}
             onSubmit={() => {
               void sendMessageText(input);
@@ -413,9 +449,18 @@ export default function App() {
               abortControllerRef.current?.abort();
               setIsStreaming(false);
             }}
+            onOpenConnectors={() => setIsConnectorsOpen(true)}
           />
         </main>
       </div>
+
+      <ConnectorsModal
+        isOpen={isConnectorsOpen}
+        userId={userId}
+        enabledConnectors={enabledConnectors}
+        onToggleConnector={handleToggleConnector}
+        onClose={() => setIsConnectorsOpen(false)}
+      />
     </div>
   );
 }
