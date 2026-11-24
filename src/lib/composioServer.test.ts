@@ -27,10 +27,14 @@ test('normalizeToolkitSlug and normalizeToolkitSlugs sanitize and dedupe', () =>
   ]);
 });
 
-test('resolveCallbackOrigin allows Cloud Run and localhost origins and rejects arbitrary domains', () => {
+test('resolveCallbackOrigin allows Cloud Run, Vercel, and localhost origins and rejects arbitrary domains', () => {
   assert.equal(
     resolveCallbackOrigin('https://ais-dev-demo-123.europe-west2.run.app/chat'),
     'https://ais-dev-demo-123.europe-west2.run.app',
+  );
+  assert.equal(
+    resolveCallbackOrigin('https://elsa-ai-preview.vercel.app/chat'),
+    'https://elsa-ai-preview.vercel.app',
   );
   assert.equal(
     resolveCallbackOrigin('http://localhost:3000'),

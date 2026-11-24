@@ -202,6 +202,7 @@ export function ConnectorsModal({
       if (
         origin !== window.location.origin &&
         !origin.endsWith('.run.app') &&
+        !origin.endsWith('.vercel.app') &&
         !origin.includes('localhost')
       ) {
         return;

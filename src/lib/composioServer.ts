@@ -106,10 +106,17 @@ export function normalizeToolkitSlugs(raw: unknown): string[] {
 
 export function resolveCallbackOrigin(clientOrigin?: unknown): string {
   const envOriginRaw = process.env.APP_URL?.trim();
-  const fallbackOrigin =
-    envOriginRaw && envOriginRaw !== 'MY_APP_URL' && /^https?:\/\//i.test(envOriginRaw)
-      ? envOriginRaw.replace(/\/+$/, '')
-      : 'http://localhost:3000';
+  const vercelProdUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  const vercelDeployUrl = process.env.VERCEL_URL?.trim();
+
+  let fallbackOrigin = 'http://localhost:3000';
+  if (envOriginRaw && envOriginRaw !== 'MY_APP_URL' && /^https?:\/\//i.test(envOriginRaw)) {
+    fallbackOrigin = envOriginRaw.replace(/\/+$/, '');
+  } else if (vercelProdUrl) {
+    fallbackOrigin = `https://${vercelProdUrl.replace(/^https?:\/\//i, '').replace(/\/+$/, '')}`;
+  } else if (vercelDeployUrl) {
+    fallbackOrigin = `https://${vercelDeployUrl.replace(/^https?:\/\//i, '').replace(/\/+$/, '')}`;
+  }
 
   if (typeof clientOrigin !== 'string' || !clientOrigin.trim()) {
     return fallbackOrigin;
@@ -122,13 +129,15 @@ export function resolveCallbackOrigin(clientOrigin?: unknown): string {
       (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
     const isCloudRun =
       parsed.protocol === 'https:' && parsed.hostname.endsWith('.run.app');
+    const isVercel =
+      parsed.protocol === 'https:' && parsed.hostname.endsWith('.vercel.app');
     const matchesEnvOrigin = parsed.origin === fallbackOrigin;
 
-    if (isLocalhost || isCloudRun || matchesEnvOrigin) {
+    if (isLocalhost || isCloudRun || isVercel || matchesEnvOrigin) {
       return parsed.origin;
     }
   } catch {
-    // Ignore malformed client origin and use server APP_URL fallback
+    // Ignore malformed client origin and use server fallback
   }
 
   return fallbackOrigin;
