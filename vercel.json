@@ -4,11 +4,15 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "functions": {
-    "api/[...path].ts": {
+    "api/index.ts": {
       "maxDuration": 60
     }
   },
   "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index?__elsa_path=$1"
+    },
     {
       "source": "/((?!api/|assets/|.*\\..*).*)",
       "destination": "/index.html"
