@@ -46,7 +46,7 @@ test('resolveCallbackOrigin allows Cloud Run, Vercel, and localhost origins and 
   assert.notEqual(rejected, 'https://evil.example.com');
 });
 
-test('buildOAuthCallbackHtml escapes script/HTML injection safely', () => {
+test('buildOAuthCallbackHtml escapes script/HTML injection safely and avoids COOP .closed access', () => {
   const html = buildOAuthCallbackHtml({
     toolkit: '<script>alert(1)</script>',
     ok: false,
@@ -54,6 +54,8 @@ test('buildOAuthCallbackHtml escapes script/HTML injection safely', () => {
   });
   assert.equal(html.includes('<script>alert(1)</script>'), false);
   assert.equal(html.includes('<img src=x'), false);
+  assert.equal(html.includes('opener.closed'), false);
+  assert.match(html, /BroadcastChannel/);
   assert.match(html, /COMPOSIO_AUTH_COMPLETE/);
 });
 

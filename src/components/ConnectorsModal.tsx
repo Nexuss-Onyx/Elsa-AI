@@ -236,27 +236,71 @@ export function ConnectorsModal({
     void fetchToolkitsPage(prevCursor);
   };
 
+  const stopAuthPolling = useCallback(() => {
+    if (popupWatchTimerRef.current) {
+      clearInterval(popupWatchTimerRef.current);
+      popupWatchTimerRef.current = null;
+    }
+  }, []);
+
+  const startAuthPolling = useCallback(
+    (targetSlug: string) => {
+      stopAuthPolling();
+      let elapsedMs = 0;
+
+      const checkServerStatus = async () => {
+        try {
+          const statusParams = new URLSearchParams({
+            userId,
+            toolkitSlug: targetSlug,
+            clientOrigin: window.location.origin,
+          });
+          const checkRes = await fetch(`/api/composio/status?${statusParams.toString()}`);
+          if (!checkRes.ok) return;
+          const checkData = (await checkRes.json()) as {
+            isConnected?: boolean;
+          };
+          if (checkData.isConnected) {
+            stopAuthPolling();
+            setConnectingSlug((prev) => (prev === targetSlug ? null : prev));
+            setFallbackAuthUrl((prev) => (prev?.slug === targetSlug ? null : prev));
+            onToggleConnector(targetSlug, true);
+            refreshCurrentPage();
+          }
+        } catch {
+          // Ignore transient polling errors
+        }
+      };
+
+      popupWatchTimerRef.current = setInterval(() => {
+        elapsedMs += 2500;
+        if (elapsedMs >= 180_000) {
+          stopAuthPolling();
+          setConnectingSlug((prev) => (prev === targetSlug ? null : prev));
+          return;
+        }
+        void checkServerStatus();
+      }, 2500);
+    },
+    [onToggleConnector, refreshCurrentPage, stopAuthPolling, userId],
+  );
+
   useEffect(() => {
-    if (!isOpen) return;
-    const handleMessage = (event: MessageEvent) => {
-      const origin = event.origin;
-      if (
-        origin !== window.location.origin &&
-        !origin.endsWith('.run.app') &&
-        !origin.endsWith('.vercel.app') &&
-        !origin.includes('localhost')
-      ) {
-        return;
-      }
-      const data = event.data as
-        | { type?: string; toolkit?: string; ok?: boolean; error?: string | null }
-        | undefined;
+    if (!isOpen) {
+      stopAuthPolling();
+      setConnectingSlug(null);
+      return;
+    }
+
+    const applyAuthResult = (data: {
+      type?: string;
+      toolkit?: string;
+      ok?: boolean;
+      error?: string | null;
+    } | undefined) => {
       if (data?.type !== 'COMPOSIO_AUTH_COMPLETE') return;
 
-      if (popupWatchTimerRef.current) {
-        clearInterval(popupWatchTimerRef.current);
-        popupWatchTimerRef.current = null;
-      }
+      stopAuthPolling();
       setConnectingSlug(null);
       setFallbackAuthUrl(null);
 
@@ -268,9 +312,74 @@ export function ConnectorsModal({
       refreshCurrentPage();
     };
 
+    const handleMessage = (event: MessageEvent) => {
+      const origin = event.origin;
+      if (
+        origin !== window.location.origin &&
+        !origin.endsWith('.run.app') &&
+        !origin.endsWith('.vercel.app') &&
+        !origin.includes('localhost')
+      ) {
+        return;
+      }
+      applyAuthResult(
+        event.data as
+          | { type?: string; toolkit?: string; ok?: boolean; error?: string | null }
+          | undefined,
+      );
+    };
+
+    let channel: BroadcastChannel | null = null;
+    if (typeof BroadcastChannel !== 'undefined') {
+      try {
+        channel = new BroadcastChannel('elsa_composio_auth');
+        channel.onmessage = (event: MessageEvent) => {
+          applyAuthResult(
+            event.data as
+              | { type?: string; toolkit?: string; ok?: boolean; error?: string | null }
+              | undefined,
+          );
+        };
+      } catch {
+        channel = null;
+      }
+    }
+
+    const handleReturnFocus = () => {
+      if (!connectingSlug) return;
+      void (async () => {
+        try {
+          const statusParams = new URLSearchParams({
+            userId,
+            toolkitSlug: connectingSlug,
+            clientOrigin: window.location.origin,
+          });
+          const checkRes = await fetch(`/api/composio/status?${statusParams.toString()}`);
+          if (!checkRes.ok) return;
+          const checkData = (await checkRes.json()) as { isConnected?: boolean };
+          if (checkData.isConnected) {
+            stopAuthPolling();
+            onToggleConnector(connectingSlug, true);
+            setConnectingSlug(null);
+            setFallbackAuthUrl(null);
+            refreshCurrentPage();
+          }
+        } catch {
+          // Ignore focus re-check errors
+        }
+      })();
+    };
+
     window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [isOpen, refreshCurrentPage, onToggleConnector]);
+    window.addEventListener('focus', handleReturnFocus);
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      window.removeEventListener('focus', handleReturnFocus);
+      if (channel) {
+        channel.close();
+      }
+    };
+  }, [isOpen, connectingSlug, userId, refreshCurrentPage, onToggleConnector, stopAuthPolling]);
 
   const handleConnect = async (app: ConnectorAppItem) => {
     if (app.isNoAuth) {
@@ -304,7 +413,7 @@ export function ConnectorsModal({
       const popup = window.open(
         data.redirectUrl,
         'composio_oauth_popup',
-        'width=620,height=720,noopener=no',
+        'width=620,height=720',
       );
 
       if (!popup) {
@@ -313,41 +422,7 @@ export function ConnectorsModal({
         return;
       }
 
-      if (popupWatchTimerRef.current) {
-        clearInterval(popupWatchTimerRef.current);
-      }
-      let elapsedMs = 0;
-      popupWatchTimerRef.current = setInterval(() => {
-        elapsedMs += 700;
-        if (popup.closed || elapsedMs >= 120_000) {
-          if (popupWatchTimerRef.current) {
-            clearInterval(popupWatchTimerRef.current);
-            popupWatchTimerRef.current = null;
-          }
-          setConnectingSlug(null);
-          void (async () => {
-            refreshCurrentPage();
-            try {
-              const checkRes = await fetch(
-                `/api/composio/toolkits?userId=${encodeURIComponent(userId)}&connectedOnly=true&limit=100`,
-              );
-              if (checkRes.ok) {
-                const checkData = (await checkRes.json()) as {
-                  items?: ConnectorAppItem[];
-                };
-                const isNowConnected = checkData.items?.some(
-                  (item) => item.slug === app.slug && item.isConnected,
-                );
-                if (isNowConnected) {
-                  onToggleConnector(app.slug, true);
-                }
-              }
-            } catch {
-              // ignore background refresh error
-            }
-          })();
-        }
-      }, 700);
+      startAuthPolling(app.slug);
     } catch (err) {
       setConnectingSlug(null);
       setModalError(
@@ -636,7 +711,12 @@ export function ConnectorsModal({
               href={fallbackAuthUrl.url}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={() => setFallbackAuthUrl(null)}
+              onClick={() => {
+                const slug = fallbackAuthUrl.slug;
+                setFallbackAuthUrl(null);
+                setConnectingSlug(slug);
+                startAuthPolling(slug);
+              }}
               className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-[#1C1B19] px-2.5 py-1.5 font-medium text-[#FAF9F5] hover:bg-[#33312D]"
             >
               <span>Authorize</span>

@@ -144,7 +144,9 @@ export default function App() {
     setActiveToolStatus(null);
     setErrorMessage(null);
 
-    try {
+    let accumulatedText = '';
+
+    const runAttempt = async (): Promise<void> => {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -178,59 +180,89 @@ export default function App() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
-      let accumulatedText = '';
+
+      const handleParts = (parts: string[]) => {
+        for (const part of parts) {
+          const lines = part.split('\n');
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const jsonText = line.slice(6).trim();
+            if (!jsonText) continue;
+
+            let event: {
+              type: 'chunk' | 'tool_status' | 'done' | 'error';
+              text?: string;
+              message?: string;
+              tools?: string[];
+            };
+            try {
+              event = JSON.parse(jsonText);
+            } catch {
+              continue;
+            }
+
+            if (event.type === 'tool_status') {
+              setActiveToolStatus('ከተገናኙ መተግበሪያዎች ጋር በመሥራት ላይ...');
+              if (enabledConnectors.length > 0) {
+                setRecentConnectors(recordRecentConnectors(enabledConnectors));
+              }
+            } else if (event.type === 'chunk' && typeof event.text === 'string') {
+              setActiveToolStatus(null);
+              accumulatedText += event.text;
+              const chunkText = event.text;
+              setConversations((prev) =>
+                prev.map((conv) => {
+                  if (conv.id !== targetConvId) return conv;
+                  return {
+                    ...conv,
+                    messages: conv.messages.map((m) =>
+                      m.id === assistantMsgId
+                        ? { ...m, text: m.text + chunkText }
+                        : m,
+                    ),
+                    updatedAt: Date.now(),
+                  };
+                }),
+              );
+            } else if (event.type === 'error') {
+              if (!accumulatedText.trim()) {
+                throw new Error(
+                  event.message || 'ኤልሳ AI ምላሽ መስጠት አልቻለችም። እባክዎ እንደገና ይሞክሩ።',
+                );
+              }
+            }
+          }
+        }
+      };
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
 
         const parts = buffer.split('\n\n');
         buffer = parts.pop() ?? '';
+        handleParts(parts);
+      }
 
-        for (const part of parts) {
-          const line = part
-            .split('\n')
-            .find((l) => l.startsWith('data: '));
-          if (!line) continue;
+      buffer += decoder.decode().replace(/\r\n/g, '\n');
+      if (buffer.trim()) {
+        handleParts(buffer.split('\n\n'));
+      }
+    };
 
-          const jsonText = line.slice(6).trim();
-          if (!jsonText) continue;
-
-          const event = JSON.parse(jsonText) as {
-            type: 'chunk' | 'tool_status' | 'done' | 'error';
-            text?: string;
-            message?: string;
-            tools?: string[];
-          };
-
-          if (event.type === 'tool_status') {
-            setActiveToolStatus('ከተገናኙ መተግበሪያዎች ጋር በመሥራት ላይ...');
-            if (enabledConnectors.length > 0) {
-              setRecentConnectors(recordRecentConnectors(enabledConnectors));
-            }
-          } else if (event.type === 'chunk' && typeof event.text === 'string') {
-            setActiveToolStatus(null);
-            accumulatedText += event.text;
-            setConversations((prev) =>
-              prev.map((conv) => {
-                if (conv.id !== targetConvId) return conv;
-                return {
-                  ...conv,
-                  messages: conv.messages.map((m) =>
-                    m.id === assistantMsgId
-                      ? { ...m, text: m.text + event.text }
-                      : m,
-                  ),
-                  updatedAt: Date.now(),
-                };
-              }),
-            );
-          } else if (event.type === 'error') {
-            throw new Error(
-              event.message || 'ኤልሳ AI ምላሽ መስጠት አልቻለችም። እባክዎ እንደገና ይሞክሩ።',
-            );
-          }
+    try {
+      try {
+        await runAttempt();
+      } catch (firstErr) {
+        if (
+          controller.signal.aborted ||
+          (firstErr instanceof DOMException && firstErr.name === 'AbortError')
+        ) {
+          throw firstErr;
+        }
+        if (!accumulatedText.trim()) {
+          await runAttempt();
         }
       }
 
@@ -238,7 +270,13 @@ export default function App() {
         throw new Error('ምላሽ አልተገኘም። እባክዎ እንደገና ይሞክሩ።');
       }
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
+      if (
+        controller.signal.aborted ||
+        (err instanceof DOMException && err.name === 'AbortError')
+      ) {
+        return;
+      }
+      if (accumulatedText.trim()) {
         return;
       }
       const message =

@@ -55,7 +55,13 @@ export function sanitizeChatHistory(
     if (!trimmed) continue;
     const role = msg.role === 'model' ? 'model' : msg.role === 'user' ? 'user' : null;
     if (!role) continue;
-    turns.push({ role, parts: [{ text: trimmed }] });
+    if (turns.length === 0 && role === 'model') continue;
+    const last = turns[turns.length - 1];
+    if (last && last.role === role) {
+      last.parts[0].text = `${last.parts[0].text}\n\n${trimmed}`;
+    } else {
+      turns.push({ role, parts: [{ text: trimmed }] });
+    }
   }
   return turns;
 }

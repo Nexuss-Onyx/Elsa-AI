@@ -90,41 +90,6 @@ export function MessageList({
             </p>
           </div>
 
-          <div className="mt-8 grid w-full grid-cols-1 gap-x-8 gap-y-5 border-t border-[#DFDCD2] pt-6 text-left sm:grid-cols-2">
-            <div>
-              <h3 className="text-sm font-semibold text-[#1C1B19]">
-                የጽሑፍ ዝግጅትና አርትዖት
-              </h3>
-              <p className="mt-1 text-[13px] leading-[1.6] text-[#5E5A52]">
-                ኢሜይሎችን፣ ደብዳቤዎችን፣ ማመልከቻዎችን እና ንግግሮችን በተስተካከለ አማርኛ ማዘጋጀት።
-              </p>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-[#1C1B19]">
-                ትርጉምና ማጠቃለያ
-              </h3>
-              <p className="mt-1 text-[13px] leading-[1.6] text-[#5E5A52]">
-                ረጃጅም ጽሑፎችን በአጭሩ ማጠቃለልና ሀሳቦችን ወደ አማርኛ ወይም ሌሎች ቋንቋዎች መተርጎም።
-              </p>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-[#1C1B19]">
-                ጥያቄና መልስ
-              </h3>
-              <p className="mt-1 text-[13px] leading-[1.6] text-[#5E5A52]">
-                በታሪክ፣ በሳይንስ፣ በቴክኖሎጂ እና በትምህርት ጉዳዮች ዙሪያ ግልጽ ማብራሪያ መስጠት።
-              </p>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-[#1C1B19]">
-                ሀሳብ ማፍለቅና እቅድ
-              </h3>
-              <p className="mt-1 text-[13px] leading-[1.6] text-[#5E5A52]">
-                ለፕሮጀክቶች፣ ለንግድ ሥራ እና ለዕለት ተዕለት ተግባራት የተደራጀ እቅድና ሀሳብ ማቅረብ።
-              </p>
-            </div>
-          </div>
-
           {errorMessage && (
             <div
               role="alert"

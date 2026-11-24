@@ -380,16 +380,31 @@ export function buildOAuthCallbackHtml(params: {
     <script>
       (function () {
         var payload = ${safePayload};
+        var sentToApp = false;
         try {
-          if (window.opener && !window.opener.closed) {
-            window.opener.postMessage(payload, '*');
-            setTimeout(function () { window.close(); }, 350);
-          } else {
-            window.location.replace('/');
+          if (typeof BroadcastChannel !== 'undefined') {
+            var channel = new BroadcastChannel('elsa_composio_auth');
+            channel.postMessage(payload);
+            channel.close();
+            sentToApp = true;
           }
-        } catch (e) {
-          window.close();
-        }
+        } catch (e) {}
+        try {
+          if (window.opener && typeof window.opener.postMessage === 'function') {
+            window.opener.postMessage(payload, '*');
+            sentToApp = true;
+          }
+        } catch (e) {}
+        setTimeout(function () {
+          try {
+            window.close();
+          } catch (e) {}
+          if (!sentToApp) {
+            try {
+              window.location.replace('/');
+            } catch (e) {}
+          }
+        }, 300);
       })();
     </script>
   </body>
@@ -724,6 +739,32 @@ export async function initiateConnectorAuth(params: {
     toolkitSlug: params.toolkitSlug,
     connectionId: connectionRequest.id ?? null,
     redirectUrl: connectionRequest.redirectUrl ?? null,
+  };
+}
+
+export async function checkConnectorStatus(params: {
+  userId: string;
+  origin: string;
+  toolkitSlug: string;
+}): Promise<{
+  isConnected: boolean;
+  connectedAccountId: string | null;
+  status: string | null;
+}> {
+  browseSessionCache.delete(`${params.userId}::${params.origin}`);
+  const session = await getBrowseSession(params.userId, params.origin);
+  const res = await session.toolkits({
+    toolkits: [params.toolkitSlug],
+    limit: 1,
+  });
+  const match = res.items.find(
+    (item) => item.slug.toLowerCase() === params.toolkitSlug.toLowerCase(),
+  );
+  const isConnected = Boolean(match?.connection?.isActive);
+  return {
+    isConnected,
+    connectedAccountId: match?.connection?.connectedAccount?.id ?? null,
+    status: match?.connection?.connectedAccount?.status ?? null,
   };
 }
 

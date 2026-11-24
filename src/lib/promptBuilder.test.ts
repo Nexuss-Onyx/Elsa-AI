@@ -18,16 +18,18 @@ test('buildElsaSystemInstruction establishes Elsa AI brand without revealing Gem
   assert.match(instruction, /Amharic/);
 });
 
-test('sanitizeChatHistory filters empty or invalid turns', () => {
+test('sanitizeChatHistory filters empty or invalid turns and enforces alternating turns', () => {
   const result = sanitizeChatHistory([
+    { role: 'model', text: 'leading orphan' },
     { role: 'user', text: '  ሰላም ኤልሳ  ' },
+    { role: 'user', text: 'ሁለተኛ ጥያቄ' },
     { role: 'model', text: '' },
     { role: 'system', text: 'ignore me' },
     { role: 'model', text: 'ሰላም! እንዴት ልረዳዎ?' },
   ]);
 
   assert.deepEqual(result, [
-    { role: 'user', parts: [{ text: 'ሰላም ኤልሳ' }] },
+    { role: 'user', parts: [{ text: 'ሰላም ኤልሳ\n\nሁለተኛ ጥያቄ' }] },
     { role: 'model', parts: [{ text: 'ሰላም! እንዴት ልረዳዎ?' }] },
   ]);
 });

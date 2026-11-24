@@ -16,6 +16,7 @@ import {
 } from './promptBuilder.ts';
 import {
   buildOAuthCallbackHtml,
+  checkConnectorStatus,
   createAgentToolSession,
   disconnectConnector,
   initiateConnectorAuth,
@@ -179,6 +180,29 @@ export function createApiApp(): Express {
     res.send(buildOAuthCallbackHtml({ toolkit, ok, error }));
   });
 
+  app.get('/api/composio/status', async (req: Request, res: Response) => {
+    if (!isComposioConfigured()) {
+      res.json({ configured: false, isConnected: false });
+      return;
+    }
+
+    const userId = normalizeUserId(req.query.userId);
+    const toolkitSlug = normalizeToolkitSlug(req.query.toolkitSlug);
+    if (!userId || !toolkitSlug) {
+      res.status(400).json({ error: 'Valid userId and toolkitSlug are required.' });
+      return;
+    }
+
+    try {
+      const origin = resolveCallbackOrigin(req.query.clientOrigin);
+      const status = await checkConnectorStatus({ userId, origin, toolkitSlug });
+      res.json({ configured: true, ...status });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to check connector status.';
+      res.status(502).json({ configured: true, isConnected: false, error: message });
+    }
+  });
+
   app.delete('/api/composio/connections/:connectionId', async (req: Request, res: Response) => {
     if (!isComposioConfigured()) {
       res.status(503).json({ error: 'Composio API key is not configured.' });
@@ -264,10 +288,16 @@ export function createApiApp(): Express {
 
     let closed = false;
     const requestAbortController = new AbortController();
-    res.on('close', () => {
-      if (!res.writableEnded) {
+    const markClientClosed = () => {
+      if (!res.writableEnded && !closed) {
         closed = true;
         requestAbortController.abort();
+      }
+    };
+    req.on('aborted', markClientClosed);
+    res.on('close', () => {
+      if (!res.writableEnded && (req.destroyed || res.destroyed)) {
+        markClientClosed();
       }
     });
 
@@ -283,216 +313,222 @@ export function createApiApp(): Express {
       }
     };
 
-    const ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-      httpOptions: {
-        timeout: agentSession ? 30_000 : 12_000,
-        headers: {
-          'User-Agent': 'aistudio-build',
+    const heartbeatTimer = setInterval(() => {
+      if (!closed && !res.writableEnded) {
+        res.write(': keepalive\n\n');
+      }
+    }, 8_000);
+
+    try {
+      const ai = new GoogleGenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+        httpOptions: {
+          timeout: 120_000,
+          headers: {
+            'User-Agent': 'aistudio-build',
+          },
         },
-      },
-    });
-    const candidates = modelRouter.getCandidateOrder({
-      estimatedTokens: estimatedInputTokens,
-      now: Date.now(),
-    });
+      });
+      const candidates = modelRouter.getCandidateOrder({
+        estimatedTokens: estimatedInputTokens,
+        now: Date.now(),
+      });
 
-    let streamedAnyChunk = false;
-    let executedAnyTool = false;
-    let lastStatus = 500;
+      const hasTools = Boolean(agentSession && agentSession.tools.length > 0);
+      const executionModes = hasTools ? [true, false] : [false];
 
-    for (const candidate of candidates) {
-      if (closed) break;
+      let accumulatedOutputText = '';
+      let lastStatus = 500;
 
-      const attemptStart = Date.now();
-      modelRouter.recordAttempt(candidate.id, estimatedInputTokens, attemptStart);
+      for (const useTools of executionModes) {
+        if (closed) break;
+        if (!useTools && accumulatedOutputText.trim().length > 0) {
+          break;
+        }
 
-      const attemptController = new AbortController();
-      const onRequestAbort = () => attemptController.abort();
-      requestAbortController.signal.addEventListener('abort', onRequestAbort, { once: true });
+        for (const candidate of candidates) {
+          if (closed) break;
 
-      const firstChunkTimer = setTimeout(() => {
-        attemptController.abort(new Error('Upstream tier timeout (503)'));
-      }, 10_000);
+          const attemptStart = Date.now();
+          modelRouter.recordAttempt(candidate.id, estimatedInputTokens, attemptStart);
 
-      try {
-        let outputText = '';
+          const effectiveTurns =
+            accumulatedOutputText.trim().length > 0
+              ? [
+                  ...turns,
+                  { role: 'model' as const, parts: [{ text: accumulatedOutputText }] },
+                  {
+                    role: 'user' as const,
+                    parts: [
+                      {
+                        text: 'Continue directly from where your previous response paused, without repeating already written text.',
+                      },
+                    ],
+                  },
+                ]
+              : turns;
 
-        if (agentSession && agentSession.tools.length > 0) {
-          const history = turns.slice(0, -1);
-          const latestUserText = turns[turns.length - 1].parts[0].text;
-          const chat = ai.chats.create({
-            model: candidate.id,
-            history,
-            config: {
-              systemInstruction,
-              tools: [{ functionDeclarations: agentSession.tools }],
-            },
-          });
+          try {
+            let attemptText = '';
 
-          let nextMessage: string | Part[] = latestUserText;
-          const MAX_TOOL_ROUNDS = 8;
-
-          for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-            if (closed) break;
-
-            const stream = await chat.sendMessageStream({
-              message: nextMessage,
-              config: {
-                systemInstruction,
-                tools: [{ functionDeclarations: agentSession.tools }],
-                abortSignal: round === 0 ? attemptController.signal : requestAbortController.signal,
-              },
-            });
-
-            const pendingCalls: FunctionCall[] = [];
-            for await (const chunk of stream) {
-              if (closed) break;
-              if (Array.isArray(chunk.functionCalls) && chunk.functionCalls.length > 0) {
-                if (!streamedAnyChunk && !executedAnyTool) {
-                  clearTimeout(firstChunkTimer);
-                }
-                for (const fc of chunk.functionCalls) {
-                  pendingCalls.push(fc);
-                }
-              }
-              const text = chunk.text;
-              if (typeof text === 'string' && text.length > 0) {
-                if (!streamedAnyChunk && !executedAnyTool) {
-                  clearTimeout(firstChunkTimer);
-                }
-                streamedAnyChunk = true;
-                outputText += text;
-                writeEvent({ type: 'chunk', text });
-              }
-            }
-
-            if (closed || pendingCalls.length === 0) {
-              break;
-            }
-
-            executedAnyTool = true;
-            writeEvent({
-              type: 'tool_status',
-              tools: pendingCalls.map((fc) => fc.name || 'connector_tool'),
-            });
-
-            const responseParts: Part[] = [];
-            for (const fc of pendingCalls) {
-              if (closed) break;
-              let parsedResult: unknown;
-              try {
-                const rawResult = await agentSession.executeToolCall({
-                  name: fc.name ?? '',
-                  args: (fc.args ?? {}) as Record<string, unknown>,
-                });
-                try {
-                  parsedResult = JSON.parse(rawResult);
-                } catch {
-                  parsedResult = rawResult;
-                }
-              } catch (toolErr) {
-                parsedResult = {
-                  error: toolErr instanceof Error ? toolErr.message : 'Tool execution failed',
-                };
-              }
-
-              responseParts.push({
-                functionResponse: {
-                  id: fc.id,
-                  name: fc.name,
-                  response: { result: parsedResult },
+            if (useTools && agentSession && agentSession.tools.length > 0) {
+              const history = effectiveTurns.slice(0, -1);
+              const latestUserText = effectiveTurns[effectiveTurns.length - 1].parts[0].text;
+              const chat = ai.chats.create({
+                model: candidate.id,
+                history,
+                config: {
+                  systemInstruction,
+                  tools: [{ functionDeclarations: agentSession.tools }],
                 },
               });
-            }
 
-            nextMessage = responseParts;
-          }
-        } else {
-          const stream = await ai.models.generateContentStream({
-            model: candidate.id,
-            contents: turns,
-            config: {
-              systemInstruction,
-              abortSignal: attemptController.signal,
-            },
-          });
+              let nextMessage: string | Part[] = latestUserText;
+              const MAX_TOOL_ROUNDS = 8;
 
-          for await (const chunk of stream) {
-            if (closed) break;
-            const text = chunk.text;
-            if (typeof text === 'string' && text.length > 0) {
-              if (!streamedAnyChunk) {
-                clearTimeout(firstChunkTimer);
+              for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+                if (closed) break;
+
+                const stream = await chat.sendMessageStream({
+                  message: nextMessage,
+                  config: {
+                    systemInstruction,
+                    tools: [{ functionDeclarations: agentSession.tools }],
+                    abortSignal: requestAbortController.signal,
+                  },
+                });
+
+                const pendingCalls: FunctionCall[] = [];
+                for await (const chunk of stream) {
+                  if (closed) break;
+                  if (Array.isArray(chunk.functionCalls) && chunk.functionCalls.length > 0) {
+                    for (const fc of chunk.functionCalls) {
+                      pendingCalls.push(fc);
+                    }
+                  }
+                  const text = chunk.text;
+                  if (typeof text === 'string' && text.length > 0) {
+                    attemptText += text;
+                    accumulatedOutputText += text;
+                    writeEvent({ type: 'chunk', text });
+                  }
+                }
+
+                if (closed || pendingCalls.length === 0) {
+                  break;
+                }
+
+                writeEvent({
+                  type: 'tool_status',
+                  tools: pendingCalls.map((fc) => fc.name || 'connector_tool'),
+                });
+
+                const responseParts: Part[] = [];
+                for (const fc of pendingCalls) {
+                  if (closed) break;
+                  let parsedResult: unknown;
+                  try {
+                    const rawResult = await agentSession.executeToolCall({
+                      name: fc.name ?? '',
+                      args: (fc.args ?? {}) as Record<string, unknown>,
+                    });
+                    try {
+                      parsedResult = JSON.parse(rawResult);
+                    } catch {
+                      parsedResult = rawResult;
+                    }
+                  } catch (toolErr) {
+                    parsedResult = {
+                      error: toolErr instanceof Error ? toolErr.message : 'Tool execution failed',
+                    };
+                  }
+
+                  responseParts.push({
+                    functionResponse: {
+                      id: fc.id,
+                      name: fc.name,
+                      response: { result: parsedResult },
+                    },
+                  });
+                }
+
+                nextMessage = responseParts;
               }
-              streamedAnyChunk = true;
-              outputText += text;
-              writeEvent({ type: 'chunk', text });
+            } else {
+              const stream = await ai.models.generateContentStream({
+                model: candidate.id,
+                contents: effectiveTurns,
+                config: {
+                  systemInstruction,
+                  abortSignal: requestAbortController.signal,
+                },
+              });
+
+              for await (const chunk of stream) {
+                if (closed) break;
+                const text = chunk.text;
+                if (typeof text === 'string' && text.length > 0) {
+                  attemptText += text;
+                  accumulatedOutputText += text;
+                  writeEvent({ type: 'chunk', text });
+                }
+              }
             }
+
+            if (closed) break;
+
+            if (!attemptText.trim() && !accumulatedOutputText.trim()) {
+              modelRouter.markFailure(candidate.id, 500, Date.now());
+              continue;
+            }
+
+            modelRouter.recordCompletionTokens(
+              candidate.id,
+              estimateTextTokens(attemptText || accumulatedOutputText),
+              Date.now(),
+            );
+            writeEvent({ type: 'done' });
+            if (!res.writableEnded) {
+              res.end();
+            }
+            return;
+          } catch (err) {
+            if (closed) break;
+
+            const status = classifyErrorStatus(err);
+            lastStatus = status;
+
+            if (status === 403) {
+              writeEvent({
+                type: 'error',
+                status: 403,
+                message: 'የአገልግሎት ቁልፍ ፈቃድ የለውም። እባክዎ በ Settings > Secrets ውስጥ ያረጋግጡ።',
+              });
+              if (!res.writableEnded) {
+                res.end();
+              }
+              return;
+            }
+
+            modelRouter.markFailure(candidate.id, status, Date.now());
           }
-        }
-
-        clearTimeout(firstChunkTimer);
-        requestAbortController.signal.removeEventListener('abort', onRequestAbort);
-
-        if (closed) break;
-
-        if (!outputText.trim()) {
-          modelRouter.markFailure(candidate.id, 500, Date.now());
-          continue;
-        }
-
-        modelRouter.recordCompletionTokens(
-          candidate.id,
-          estimateTextTokens(outputText),
-          Date.now(),
-        );
-        writeEvent({ type: 'done' });
-        if (!res.writableEnded) {
-          res.end();
-        }
-        return;
-      } catch (err) {
-        clearTimeout(firstChunkTimer);
-        requestAbortController.signal.removeEventListener('abort', onRequestAbort);
-        const status = classifyErrorStatus(err);
-        lastStatus = status;
-
-        if (status === 403) {
-          writeEvent({
-            type: 'error',
-            status: 403,
-            message: 'የአገልግሎት ቁልፍ ፈቃድ የለውም። እባክዎ በ Settings > Secrets ውስጥ ያረጋግጡ።',
-          });
-          if (!res.writableEnded) {
-            res.end();
-          }
-          return;
-        }
-
-        modelRouter.markFailure(candidate.id, status, Date.now());
-
-        if (streamedAnyChunk || executedAnyTool) {
-          writeEvent({
-            type: 'error',
-            status,
-            message: 'ምላሹ ተቋርጧል። እባክዎ እንደገና ይሞክሩ።',
-          });
-          if (!res.writableEnded) {
-            res.end();
-          }
-          return;
         }
       }
-    }
 
-    if (!closed && !res.writableEnded) {
-      writeEvent({
-        type: 'error',
-        status: lastStatus,
-        message: 'ኤልሳ AI አሁን ምላሽ መስጠት አልቻለችም። እባክዎ ከጥቂት ሰከንዶች በኋላ እንደገና ይሞክሩ።',
-      });
-      res.end();
+      if (!closed && !res.writableEnded) {
+        if (accumulatedOutputText.trim().length > 0) {
+          writeEvent({ type: 'done' });
+        } else {
+          writeEvent({
+            type: 'error',
+            status: lastStatus,
+            message: 'ኤልሳ AI አሁን ምላሽ መስጠት አልቻለችም። እባክዎ ከጥቂት ሰከንዶች በኋላ እንደገና ይሞክሩ።',
+          });
+        }
+        res.end();
+      }
+    } finally {
+      clearInterval(heartbeatTimer);
     }
   });
 
